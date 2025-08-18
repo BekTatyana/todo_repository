@@ -100,4 +100,3 @@ def delete_all():
         case "Ошибка":
             return jsonify({"error": "Ошибка при удалении задач "}), 404
 
-
