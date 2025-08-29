@@ -1,112 +1,93 @@
-from flask import jsonify, request, g
+
 from app import app, db
 from pydantic import ValidationError
-from app.utils.html_text import html_text
 from app.utils.xlsx_and_csv import xlsx_csv
-from app.pydantic_file import AddTask, IdDel, NameDel, LoginPassword
-from flask_httpauth import HTTPBasicAuth
+from app.utils.pydantic_file import AddTask, IdDel, NameDel
+from fastapi import FastAPI,  HTTPException, Request
+from fastapi.security import HTTPBasic
 
-auth = HTTPBasicAuth()
 
-@auth.verify_password
-def verify_password(login, password):
-    LoginPassword.model_validate({"login": login, "password": password})
-    super_key = request.headers.get('X-Key')
-    result = db.auth_user(login, password, super_key)
-    if result:
-        g.user = login
-    return result
-
-#обработка ошибки auth
-@auth.error_handler
-def auth_error(status):
-    return jsonify({"error": "Требуется аутентификация"}), status
-
-#главная страница
-@app.route('/', methods=['GET'])
-def main_page():
-    return html_text
-
+security = HTTPBasic()
+app = FastAPI()
 
 # Добавление задач
-@app.route('/api/tasks', methods=['POST'])
-@auth.login_required
+@app.post('/api/tasks', status_code=201)
 def add_tasks():
     try:
+        data = AddTask.model_validate(Request.json)
+        username = data.username
+        tasks = data.tasks
         
-        AddTask.model_validate(request.json)
-        data = request.get_json()
-        username = data['username']
-        tasks = data['tasks']
-    
-        result_save = db.save_tasks(username, tasks,g.user)
-
-        xlsxcsv = xlsx_csv(db.get_all_info(g.user))
+        result_save = db.save_tasks(username, tasks)
+        info_from_data = db.get_all_info()
+        xlsxcsv = xlsx_csv(info_from_data)
         result_csv = xlsxcsv.add_to_csv()
         result_xlsx = xlsxcsv.add_to_xlsx()
         
         result_for_all = {
             "Database": result_save,
-            "Csv ": result_csv,
+            "Csv": result_csv,
             "Xlsx": result_xlsx
-            }
+        }
 
-        return jsonify(result_for_all), 201
+        return result_for_all
         
-    except ValidationError as e:
-        return jsonify({"error": str(e)}), 500
+    except ValidationError :
+        raise HTTPException(status_code=400, detail=data)
 
 # Получение всех задач
-@app.route('/api/tasks', methods=['GET'])
-@auth.login_required
+@app.get('/api/tasks')
 def get_all_tasks():
-
     try:
-        full_info = db.get_all_info(g.user)
-        return jsonify(full_info)
+        full_info = db.get_all_info()
+        return full_info
     
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Удаление задачи по ID
-@app.route('/api/tasks/id', methods=['DELETE'])
-@auth.login_required
+@app.delete('/api/tasks/id', status_code=200)
 def delete_id_tasks():
-
     try:
-        IdDel.model_validate(request.json)
-
-        task_id = request.get_json()
-        success = db.delete_only_id_tasks(list(task_id["id"]),g.user)
+        data = IdDel.model_validate(Request.json)
+        task_ids = data.id
+        
+        success = db.delete_only_id_tasks(task_ids)
         if not success:
-            return jsonify({"error": "При удалении задач произошла ошибка"}), 404
+            raise HTTPException(status_code=404, detail="При удалении задач произошла ошибка")
 
-        return jsonify({"Успех": success}), 201
+        return {"Успех": success}
          
-    except ValidationError as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-@app.route('/api/tasks/name',methods = ['DELETE'])
-@auth.login_required
+# Удаление задач по имени пользователя
+@app.delete('/api/tasks/name', status_code=200)
 def delete_name():
     try:
-        NameDel.model_validate(request.json)
-        name_info = request.get_json()
+        data = NameDel.model_validate(Request.json)
+        username = data.username  
         
-        success = db.delete_user_tasks(name_info["username"],g.user)
-
+        if not username:
+            raise HTTPException(status_code=400, detail="Необходимо имя пользователя")
+        
+        success = db.delete_user_tasks(username)
         if not success:
-            return jsonify({"error": "При удалении задач произошла ошибка"}), 404
+            raise HTTPException(status_code=404, detail="При удалении задач произошла ошибка")
             
-        return jsonify({"success": success}), 201
+        return {"success": success}
         
-    except ValidationError as e:
-        return jsonify({"error": str(e)}), 500          
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-@app.route('/api/tasks/all',methods = ['DELETE'])
-@auth.login_required
+# Удаление всех задач
+@app.delete('/api/tasks/all', status_code=200)
 def delete_all():
-    success = db.delete_all(g.user)
-    if not success:
-            return jsonify({"error": "При удалении задач произошла ошибка"}), 404
-    return jsonify({"success": success}), 201
+    try:
+        success = db.delete_all()
+        if not success:
+            raise HTTPException(status_code=404, detail="При удалении задач произошла ошибка")
+        return {"success": success}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
